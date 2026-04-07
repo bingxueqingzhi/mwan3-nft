@@ -60,6 +60,16 @@ jobs:
           cd openwrt
           make download -j$(nproc) V=s
 
+      - name: Prepare tools
+        run: |
+          cd openwrt
+          make tools/install -j$(nproc) V=s
+
+      - name: Prepare toolchain
+        run: |
+          cd openwrt
+          make toolchain/install -j1 V=s
+
       - name: Build mwan3 packages
         run: |
           cd openwrt
