@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout
+      - name: Checkout current repo
         uses: actions/checkout@v4
 
       - name: Initialize build environment
@@ -29,12 +29,16 @@ jobs:
       - name: Clone OpenWrt source
         run: |
           git clone https://github.com/openwrt/openwrt.git -b openwrt-24.10 openwrt
-          echo "src-git mwan3nft https://github.com/dl12345/mwan3-nft.git" >> openwrt/feeds.conf.default
+
+      - name: Inject local package source
+        run: |
+          mkdir -p openwrt/package/mwan3-nft
+          rsync -a --delete ./mwan3/ openwrt/package/mwan3-nft/mwan3/
+          rsync -a --delete ./luci-app-mwan3/ openwrt/package/mwan3-nft/luci-app-mwan3/
 
       - name: Update feeds
         run: |
           cd openwrt
-          rm -rf feeds/packages/net/mwan3
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
@@ -56,15 +60,15 @@ jobs:
           cd openwrt
           make download -j$(nproc) V=s
 
-      - name: Full build
+      - name: Build mwan3 packages
         run: |
           cd openwrt
-          make -j$(nproc) V=s
+          make package/mwan3-nft/mwan3/compile package/mwan3-nft/luci-app-mwan3/compile -j$(nproc) V=s
 
       - name: Collect ipk
         run: |
           mkdir -p upload
-          find openwrt/bin/packages/ -name "*.ipk" -exec cp {} upload/ \;
+          find openwrt/bin/packages/ -name "*.ipk" \( -name "mwan3*.ipk" -o -name "luci-app-mwan3*.ipk" \) -exec cp {} upload/ \;
           ls -lah upload
 
       - name: Upload artifacts
