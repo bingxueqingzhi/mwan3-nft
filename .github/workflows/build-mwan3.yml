@@ -15,6 +15,7 @@ on:
 jobs:
   build:
     # 指定运行此任务的虚拟机环境
+    # 使用 ubuntu-24.04 是很好的选择，因为它包含了较新的编译工具链，适合编译 main 分支
     runs-on: ubuntu-24.04
     env:
       # 兼容旧版 action 的环境变量，保留即可
@@ -42,21 +43,20 @@ jobs:
             qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs unzip \
             vim wget xmlto xxd zlib1g-dev file
 
-      # 第三步：克隆指定分支的 OpenWrt 源码
+      # 第三步：克隆 OpenWrt 的主开发分支 (main)
+      # ！！！这是唯一的修改点，我们将分支从 "openwrt-24.10" 改为 "main" ！！！
+      # "main" 分支包含了所有最新的软件包版本，包括 mwan3 v2.12+
       - name: Clone OpenWrt source
         run: |
-          git clone https://github.com/openwrt/openwrt.git -b openwrt-24.10 openwrt
+          git clone https://github.com/openwrt/openwrt.git -b main openwrt
 
       # 第四步：将你的 mwan3-nft 和 luci-app-mwan3 包作为自定义 feed 添加
-      # 这是比 rsync 更标准、更干净的做法
+      # 这个方法非常棒，它会确保编译系统优先使用你的版本
       - name: Add custom packages feed
         run: |
-          # 创建一个临时的 feed 目录
           mkdir custom_feed
-          # 将你的包从当前仓库复制到 feed 目录中
           cp -r ./mwan3/ custom_feed/mwan3
           cp -r ./luci-app-mwan3/ custom_feed/luci-app-mwan3
-          # 告诉 OpenWrt 在哪里可以找到这个自定义 feed
           echo 'src-link custom ../custom_feed' >> openwrt/feeds.conf.default
 
       # 第五步：更新并安装所有的 feeds
@@ -85,7 +85,6 @@ jobs:
           make defconfig
 
       # 第七步：执行编译（核心步骤）
-      # 这一步将自动处理所有事情：下载源码、编译工具链、编译内核、编译所有依赖包，最后编译你的包
       - name: Build the firmware and packages
         run: |
           cd openwrt
@@ -95,12 +94,9 @@ jobs:
       # 第八步：收集编译好的 .ipk 文件
       - name: Collect ipk files
         run: |
-          # 创建一个用于上传的目录
           mkdir -p upload
-          # 从编译输出目录中找到 mwan3 和 luci-app-mwan3 的 .ipk 文件，并复制到 upload 目录
           find openwrt/bin/packages/ -type f -name "mwan3_*.ipk" -exec cp {} upload/ \;
           find openwrt/bin/packages/ -type f -name "luci-app-mwan3_*.ipk" -exec cp {} upload/ \;
-          # 显示一下收集到了哪些文件
           echo "Collected IPK files:"
           ls -lah upload
 
@@ -108,7 +104,5 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          # 设置上传产物的名称
           name: mwan3-nft-ipk-x86_64
-          # 指定要上传的目录
           path: upload/
