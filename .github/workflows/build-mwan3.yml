@@ -74,10 +74,10 @@ jobs:
           make toolchain/download -j$(nproc) V=s || true
           make toolchain/install -j1 V=s
 
-      - name: Build kernel package (serialized)
+      - name: Build target linux (serialized)
         run: |
           cd openwrt
-          make package/kernel/linux/compile -j1 V=s
+          make target/linux/compile -j1 V=s
 
       - name: Build mwan3 package (serialized)
         run: |
