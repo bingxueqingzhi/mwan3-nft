@@ -6,6 +6,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Checkout current repo
@@ -14,7 +16,6 @@ jobs:
       - name: Initialize build environment
         env:
           DEBIAN_FRONTEND: noninteractive
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
         run: |
           sudo apt-get update
           sudo apt-get install -y \
