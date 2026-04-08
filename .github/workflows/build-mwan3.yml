@@ -74,10 +74,20 @@ jobs:
           make toolchain/download -j$(nproc) V=s || true
           make toolchain/install -j1 V=s
 
-      - name: Build mwan3 packages
+      - name: Build kernel package (serialized)
         run: |
           cd openwrt
-          make package/mwan3-nft/mwan3/compile package/mwan3-nft/luci-app-mwan3/compile -j$(nproc) V=s
+          make package/kernel/linux/compile -j1 V=s
+
+      - name: Build mwan3 package (serialized)
+        run: |
+          cd openwrt
+          make package/mwan3-nft/mwan3/compile -j1 V=s
+
+      - name: Build luci-app-mwan3 package (serialized)
+        run: |
+          cd openwrt
+          make package/mwan3-nft/luci-app-mwan3/compile -j1 V=s
 
       - name: Collect ipk
         run: |
