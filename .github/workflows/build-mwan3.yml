@@ -1,13 +1,32 @@
+# GitHub Action 的名称，会显示在 Actions 列表中
+name: Build mwan3-nft ipk for x86_64
+
+# 触发器配置
+on:
+  # 允许你从 GitHub Actions 页面手动触发此工作流
+  workflow_dispatch:
+
+  # 当有代码推送到 main 分支时，也会自动触发
+  push:
+    branches:
+      - main
+
+# 定义工作流中的任务
 jobs:
   build:
+    # 指定运行此任务的虚拟机环境
     runs-on: ubuntu-24.04
     env:
+      # 兼容旧版 action 的环境变量，保留即可
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+    # 定义任务中的各个步骤
     steps:
+      # 第一步：检出（下载）你的仓库代码到虚拟机
       - name: Checkout current repo
         uses: actions/checkout@v4
 
+      # 第二步：安装 OpenWrt 编译所需的各种依赖软件包
       - name: Initialize build environment
         env:
           DEBIAN_FRONTEND: noninteractive
@@ -23,59 +42,73 @@ jobs:
             qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs unzip \
             vim wget xmlto xxd zlib1g-dev file
 
+      # 第三步：克隆指定分支的 OpenWrt 源码
       - name: Clone OpenWrt source
         run: |
           git clone https://github.com/openwrt/openwrt.git -b openwrt-24.10 openwrt
 
-      # --- 关键改动点 1：使用自定义 feed 方式注入包，更标准 ---
-      # 这种方式比 rsync 更干净，更符合 OpenWrt 的工作流
-      - name: Add custom feed
+      # 第四步：将你的 mwan3-nft 和 luci-app-mwan3 包作为自定义 feed 添加
+      # 这是比 rsync 更标准、更干净的做法
+      - name: Add custom packages feed
         run: |
+          # 创建一个临时的 feed 目录
           mkdir custom_feed
-          cp -r ./mwan3 custom_feed/mwan3-nft
-          cp -r ./luci-app-mwan3 custom_feed/luci-app-mwan3
+          # 将你的包从当前仓库复制到 feed 目录中
+          cp -r ./mwan3/ custom_feed/mwan3
+          cp -r ./luci-app-mwan3/ custom_feed/luci-app-mwan3
+          # 告诉 OpenWrt 在哪里可以找到这个自定义 feed
           echo 'src-link custom ../custom_feed' >> openwrt/feeds.conf.default
-      
+
+      # 第五步：更新并安装所有的 feeds
       - name: Update and install feeds
         run: |
           cd openwrt
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      # --- 关键改动点 2：优化 .config 文件 ---
-      # 直接把你的包名写进去，然后让 make defconfig 自动处理依赖
-      # mwan3-nft 依赖 mwan3，luci-app-mwan3 依赖 luci，让系统自己选上
+      # 第六步：生成编译配置文件 .config
       - name: Generate .config for x86_64
         run: |
           cd openwrt
           cat > .config <<'EOF'
+          # 设置目标平台为 x86_64
           CONFIG_TARGET_x86=y
           CONFIG_TARGET_x86_64=y
           CONFIG_TARGET_x86_64_DEVICE_generic=y
 
-          # 直接选中你要编译的包
-          CONFIG_PACKAGE_mwan3-nft=y
+          # 选中你需要编译的最终软件包
+          # 编译系统会自动分析并选中所有依赖项（如 luci-base 等）
+          CONFIG_PACKAGE_mwan3=y
           CONFIG_PACKAGE_luci-app-mwan3=y
           EOF
+          # 应用配置并自动选择所有必需的依赖
           make defconfig
 
-      # --- 关键改动点 3：合并所有编译步骤 ---
-      # 只需要一个 make 命令，它会处理所有依赖、工具链和编译过程
-      - name: Build packages
+      # 第七步：执行编译（核心步骤）
+      # 这一步将自动处理所有事情：下载源码、编译工具链、编译内核、编译所有依赖包，最后编译你的包
+      - name: Build the firmware and packages
         run: |
           cd openwrt
+          # 使用所有可用的 CPU核心进行并行编译，V=s 参数可以在出错时显示详细日志
           make -j$(nproc) V=s
 
-      - name: Collect ipk
+      # 第八步：收集编译好的 .ipk 文件
+      - name: Collect ipk files
         run: |
+          # 创建一个用于上传的目录
           mkdir -p upload
-          # ipk 的路径会根据包名变化，用 find 来找最稳妥
-          find openwrt/bin/packages/ -name "mwan3-nft*.ipk" -exec cp {} upload/ \;
-          find openwrt/bin/packages/ -name "luci-app-mwan3*.ipk" -exec cp {} upload/ \;
+          # 从编译输出目录中找到 mwan3 和 luci-app-mwan3 的 .ipk 文件，并复制到 upload 目录
+          find openwrt/bin/packages/ -type f -name "mwan3_*.ipk" -exec cp {} upload/ \;
+          find openwrt/bin/packages/ -type f -name "luci-app-mwan3_*.ipk" -exec cp {} upload/ \;
+          # 显示一下收集到了哪些文件
+          echo "Collected IPK files:"
           ls -lah upload
 
+      # 第九步：上传 .ipk 文件作为构建产物
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
+          # 设置上传产物的名称
           name: mwan3-nft-ipk-x86_64
+          # 指定要上传的目录
           path: upload/
