@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      TARGET: x86_64
 
     steps:
       - name: Checkout current repo
@@ -31,38 +32,61 @@ jobs:
             qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs unzip \
             vim wget xmlto xxd zlib1g-dev file
 
-      - name: Clone Kwrt source (25.12 branch)
+      - name: Clone official OpenWrt 25.12
         run: |
-          git clone https://github.com/kiddin9/Kwrt.git -b 25.12 openwrt --depth=1
+          git clone https://github.com/openwrt/openwrt.git -b openwrt-25.12 openwrt --depth=1
 
-      - name: Add dl12345/mwan3-nft custom feed (at top so it wins)
+      - name: Clone Kwrt overlay (25.12)
         run: |
-          mkdir custom_feed
+          git clone https://github.com/kiddin9/Kwrt.git -b 25.12 kwrt --depth=1
+
+      - name: Apply Kwrt overlay (common + x86_64) and run diy.sh
+        run: |
+          # 拷贝 Kwrt 的公共覆盖（含 .config、补丁、feeds 设置等）
+          cp -rf kwrt/devices/common/. openwrt/
+          # 拷贝 x86_64 专属覆盖（若存在）
+          if [ -d "kwrt/devices/${TARGET}" ]; then
+            cp -rf kwrt/devices/${TARGET}/. openwrt/
+          fi
+          # 跑 Kwrt 的 diy 脚本（在 kwrt 目录里跑，因为脚本是相对路径引用 devices/…）
+          if [ -f "kwrt/devices/common/diy.sh" ]; then
+            cd kwrt && chmod +x devices/common/diy.sh && bash devices/common/diy.sh
+            cd ..
+          fi
+
+      - name: Add dl12345/mwan3-nft as highest-priority custom feed
+        run: |
+          mkdir -p custom_feed
           git clone https://github.com/dl12345/mwan3-nft.git custom_feed/mwan3-nft
-          # 把 custom 放到 feeds.conf.default 最前面，优先级最高
+          # 如果 feeds.conf.default 不存在就用 example 初始化
+          if [ ! -f openwrt/feeds.conf.default ]; then
+            cp openwrt/feeds.conf.default.example openwrt/feeds.conf.default 2>/dev/null || true
+          fi
+          # 把 custom 插到最前面
           sed -i '1i src-link custom '"$PWD"'/custom_feed' openwrt/feeds.conf.default
+          echo "=== feeds.conf.default ==="
+          cat openwrt/feeds.conf.default
 
-      - name: Update feeds and force-install custom mwan3 over Kwrt's
+      - name: Update feeds and force-override mwan3 with custom feed
         run: |
           cd openwrt
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-          # 强制用 custom feed 的 mwan3 / luci-app-mwan3 覆盖其它 feed 的同名包
           ./scripts/feeds install -f -p custom mwan3
           ./scripts/feeds install -f -p custom luci-app-mwan3
-          # 验证覆盖成功：软链接应指向 custom_feed
-          ls -la package/feeds/custom/ || true
-          readlink package/feeds/*/mwan3 || true
-          readlink package/feeds/*/luci-app-mwan3 || true
+          # 验证：下面这个 readlink 应该指向 ../../custom_feed/mwan3-nft/mwan3
+          readlink package/feeds/custom/mwan3 || true
+          readlink package/feeds/custom/luci-app-mwan3 || true
 
-      - name: Generate .config for x86_64
+      - name: Force x86_64 target in .config and run defconfig
         run: |
           cd openwrt
-          cat > .config <<'EOF'
+          # 清掉 Kwrt 可能带的其它 target，只保留 x86_64
+          sed -i '/^CONFIG_TARGET_/d' .config
+          cat >> .config <<'EOF'
           CONFIG_TARGET_x86=y
           CONFIG_TARGET_x86_64=y
           CONFIG_TARGET_x86_64_DEVICE_generic=y
-
           CONFIG_PACKAGE_luci=y
           CONFIG_PACKAGE_mwan3=y
           CONFIG_PACKAGE_luci-app-mwan3=y
@@ -70,7 +94,12 @@ jobs:
           EOF
           make defconfig
 
-      - name: Build only the packages we need (fast, avoid full firmware)
+      - name: Download dependencies
+        run: |
+          cd openwrt
+          make -j$(nproc) download V=s
+
+      - name: Build only the packages we need
         run: |
           cd openwrt
           make -j$(nproc) package/mwan3/compile V=s
