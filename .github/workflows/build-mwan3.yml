@@ -42,13 +42,10 @@ jobs:
 
       - name: Apply Kwrt overlay (common + x86_64) and run diy.sh
         run: |
-          # 拷贝 Kwrt 的公共覆盖（含 .config、补丁、feeds 设置等）
           cp -rf kwrt/devices/common/. openwrt/
-          # 拷贝 x86_64 专属覆盖（若存在）
           if [ -d "kwrt/devices/${TARGET}" ]; then
             cp -rf kwrt/devices/${TARGET}/. openwrt/
           fi
-          # 跑 Kwrt 的 diy 脚本（在 kwrt 目录里跑，因为脚本是相对路径引用 devices/…）
           if [ -f "kwrt/devices/common/diy.sh" ]; then
             cd kwrt && chmod +x devices/common/diy.sh && bash devices/common/diy.sh
             cd ..
@@ -58,11 +55,9 @@ jobs:
         run: |
           mkdir -p custom_feed
           git clone https://github.com/dl12345/mwan3-nft.git custom_feed/mwan3-nft
-          # 如果 feeds.conf.default 不存在就用 example 初始化
           if [ ! -f openwrt/feeds.conf.default ]; then
             cp openwrt/feeds.conf.default.example openwrt/feeds.conf.default 2>/dev/null || true
           fi
-          # 把 custom 插到最前面
           sed -i '1i src-link custom '"$PWD"'/custom_feed' openwrt/feeds.conf.default
           echo "=== feeds.conf.default ==="
           cat openwrt/feeds.conf.default
@@ -74,15 +69,13 @@ jobs:
           ./scripts/feeds install -a
           ./scripts/feeds install -f -p custom mwan3
           ./scripts/feeds install -f -p custom luci-app-mwan3
-          # 验证：下面这个 readlink 应该指向 ../../custom_feed/mwan3-nft/mwan3
           readlink package/feeds/custom/mwan3 || true
           readlink package/feeds/custom/luci-app-mwan3 || true
 
       - name: Force x86_64 target in .config and run defconfig
         run: |
           cd openwrt
-          # 清掉 Kwrt 可能带的其它 target，只保留 x86_64
-          sed -i '/^CONFIG_TARGET_/d' .config
+          sed -i '/^CONFIG_TARGET_/d' .config 2>/dev/null || true
           cat >> .config <<'EOF'
           CONFIG_TARGET_x86=y
           CONFIG_TARGET_x86_64=y
@@ -94,12 +87,34 @@ jobs:
           EOF
           make defconfig
 
-      - name: Download dependencies
+      - name: Cache toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            openwrt/staging_dir/host
+            openwrt/staging_dir/toolchain-x86_64_gcc-*
+            openwrt/build_dir/host
+            openwrt/build_dir/toolchain-x86_64_gcc-*
+          key: toolchain-x86_64-kwrt2512-v1
+          restore-keys: |
+            toolchain-x86_64-kwrt2512-
+
+      - name: Download sources
         run: |
           cd openwrt
           make -j$(nproc) download V=s
 
-      - name: Build only the packages we need
+      - name: Build host tools
+        run: |
+          cd openwrt
+          make -j$(nproc) tools/install V=s
+
+      - name: Build target toolchain
+        run: |
+          cd openwrt
+          make -j$(nproc) toolchain/install V=s
+
+      - name: Build mwan3 packages
         run: |
           cd openwrt
           make -j$(nproc) package/mwan3/compile V=s
