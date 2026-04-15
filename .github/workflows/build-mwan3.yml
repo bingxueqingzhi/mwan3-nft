@@ -1,4 +1,4 @@
-name: Build mwan3-nft (dl12345 version) for 25.12
+name: Build mwan3-nft (dl12345) for Kwrt 25.12
 
 on:
   workflow_dispatch:
@@ -31,21 +31,29 @@ jobs:
             qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs unzip \
             vim wget xmlto xxd zlib1g-dev file
 
-      - name: Clone OpenWrt source (main branch for 25.12)
+      - name: Clone Kwrt source (25.12 branch)
         run: |
-          git clone https://github.com/openwrt/openwrt.git -b main openwrt
+          git clone https://github.com/kiddin9/Kwrt.git -b 25.12 openwrt --depth=1
 
-      - name: Add dl12345/mwan3-nft custom feed
+      - name: Add dl12345/mwan3-nft custom feed (at top so it wins)
         run: |
           mkdir custom_feed
           git clone https://github.com/dl12345/mwan3-nft.git custom_feed/mwan3-nft
-          echo 'src-link custom ../custom_feed' >> openwrt/feeds.conf.default
+          # 把 custom 放到 feeds.conf.default 最前面，优先级最高
+          sed -i '1i src-link custom '"$PWD"'/custom_feed' openwrt/feeds.conf.default
 
-      - name: Update and install all feeds
+      - name: Update feeds and force-install custom mwan3 over Kwrt's
         run: |
           cd openwrt
           ./scripts/feeds update -a
           ./scripts/feeds install -a
+          # 强制用 custom feed 的 mwan3 / luci-app-mwan3 覆盖其它 feed 的同名包
+          ./scripts/feeds install -f -p custom mwan3
+          ./scripts/feeds install -f -p custom luci-app-mwan3
+          # 验证覆盖成功：软链接应指向 custom_feed
+          ls -la package/feeds/custom/ || true
+          readlink package/feeds/*/mwan3 || true
+          readlink package/feeds/*/luci-app-mwan3 || true
 
       - name: Generate .config for x86_64
         run: |
@@ -56,41 +64,42 @@ jobs:
           CONFIG_TARGET_x86_64_DEVICE_generic=y
 
           CONFIG_PACKAGE_luci=y
-          CONFIG_PACKAGE_mwan3-nft=y
-          CONFIG_PACKAGE_luci-app-mwan3-nft=y
+          CONFIG_PACKAGE_mwan3=y
+          CONFIG_PACKAGE_luci-app-mwan3=y
+          CONFIG_PACKAGE_luci-i18n-mwan3-zh-cn=y
           EOF
           make defconfig
 
-      - name: Build the packages
+      - name: Build only the packages we need (fast, avoid full firmware)
         run: |
           cd openwrt
-          make -j$(nproc) V=s
+          make -j$(nproc) package/mwan3/compile V=s
+          make -j$(nproc) package/luci-app-mwan3/compile V=s
+          make -j$(nproc) package/luci-i18n-mwan3-zh-cn/compile V=s || true
 
       - name: Debug - list all build artifacts
         run: |
           echo "=== bin/packages tree ==="
           find openwrt/bin/packages/ -type f 2>/dev/null | head -100 || echo "no bin/packages"
-          echo "=== bin/targets tree ==="
-          find openwrt/bin/targets/ -type f 2>/dev/null | head -100 || echo "no bin/targets"
 
-      - name: Collect package files
+      - name: Collect IPK files
         run: |
           mkdir -p upload
           find openwrt/bin/ -type f \( \
-              -name "mwan3-nft_*.ipk" -o \
-              -name "mwan3-nft-*.apk" -o \
-              -name "luci-app-mwan3-nft_*.ipk" -o \
-              -name "luci-app-mwan3-nft-*.apk" \
+              -name "mwan3_*.ipk" -o \
+              -name "luci-app-mwan3_*.ipk" -o \
+              -name "luci-i18n-mwan3-*.ipk" \
             \) -exec cp -v {} upload/ \;
           echo "=== Collected files ==="
           ls -lah upload
           if [ -z "$(ls -A upload)" ]; then
-            echo "::warning::upload/ is empty — check the debug step above for actual filenames"
+            echo "::error::upload/ is empty"
+            exit 1
           fi
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mwan3-nft-dl12345-ipk-x86_64
+          name: mwan3-nft-ipk-x86_64-kwrt2512
           path: upload/
-          if-no-files-found: warn
+          if-no-files-found: error
