@@ -1,149 +1,72 @@
-name: Build mwan3-nft (dl12345) for Kwrt 25.12
+#
+# Copyright (C) 2022-2025 OpenWrt
+# Copyright (C) 2025 dl12345
+#
+# This is free software, licensed under the GNU General Public License v2.
+# See /LICENSE for more information.
 
-on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
+include $(TOPDIR)/rules.mk
 
-jobs:
-  build:
-    runs-on: ubuntu-24.04
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      TARGET: x86_64
+PKG_NAME:=mwan3
+PKG_RELEASE:=1
 
-    steps:
-      - name: Checkout current repo
-        uses: actions/checkout@v4
+PKG_SOURCE_URL:=https://github.com/dl12345/mwan3-nft.git
+PKG_SOURCE_PROTO:=git
+PKG_SOURCE_DATE:=2025-04-15
+PKG_SOURCE_VERSION:=main
+PKG_MIRROR_HASH:=skip
 
-      - name: Initialize build environment
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
-            bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext \
-            gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 \
-            libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev \
-            libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz \
-            msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 python3-pip \
-            qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs unzip \
-            vim wget xmlto xxd zlib1g-dev file
+PKG_MAINTAINER:=dl12345
+PKG_LICENSE:=GPL-2.0
+PKG_LICENSE_FILES:=LICENSE
 
-      - name: Clone official OpenWrt 25.12
-        run: |
-          git clone https://github.com/openwrt/openwrt.git -b openwrt-25.12 openwrt --depth=1
+include $(INCLUDE_DIR)/package.mk
+include $(INCLUDE_DIR)/cmake.mk
 
-      - name: Clone Kwrt overlay (25.12)
-        run: |
-          git clone https://github.com/kiddin9/Kwrt.git -b 25.12 kwrt --depth=1
+define Package/mwan3
+  SECTION:=net
+  CATEGORY:=Network
+  SUBMENU:=Routing and Redirection
+  TITLE:=Multi-WAN controller for nftables
+  DEPENDS:=+libubox +libubus +libnlopt +libnftnl +nftables +musl-fts
+  CONFLICTS:=mwan3
+  USERID:=mwan3:mwan3
+endef
 
-      - name: Apply Kwrt overlay (common + x86_64) and run diy.sh
-        run: |
-          cp -rf kwrt/devices/common/. openwrt/
-          if [ -d "kwrt/devices/${TARGET}" ]; then
-            cp -rf kwrt/devices/${TARGET}/. openwrt/
-          fi
-          if [ -f "kwrt/devices/common/diy.sh" ]; then
-            cd kwrt && chmod +x devices/common/diy.sh && bash devices/common/diy.sh
-            cd ..
-          fi
+define Package/mwan3/description
+  Multi-WAN controller for nftables
+endef
 
-      - name: Add dl12345/mwan3-nft as highest-priority custom feed
-        run: |
-          mkdir -p custom_feed
-          git clone https://github.com/dl12345/mwan3-nft.git custom_feed/mwan3-nft
-          if [ ! -f openwrt/feeds.conf.default ]; then
-            cp openwrt/feeds.conf.default.example openwrt/feeds.conf.default 2>/dev/null || true
-          fi
-          sed -i '1i src-link custom '"$PWD"'/custom_feed' openwrt/feeds.conf.default
-          echo "=== feeds.conf.default ==="
-          cat openwrt/feeds.conf.default
+TARGET_CFLAGS += \
+	-I$(STAGING_DIR)/usr/include \
+	-D_GNU_SOURCE
 
-      - name: Update feeds and force-override mwan3 with custom feed
-        run: |
-          cd openwrt
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
-          ./scripts/feeds install -f -p custom mwan3
-          ./scripts/feeds install -f -p custom luci-app-mwan3
-          readlink package/feeds/custom/mwan3 || true
-          readlink package/feeds/custom/luci-app-mwan3 || true
+TARGET_LDFLAGS += \
+	-lfts \
+	-L$(STAGING_DIR)/usr/lib
 
-      - name: Force x86_64 target in .config and run defconfig
-        run: |
-          cd openwrt
-          sed -i '/^CONFIG_TARGET_/d' .config 2>/dev/null || true
-          cat >> .config <<'EOF'
-          CONFIG_TARGET_x86=y
-          CONFIG_TARGET_x86_64=y
-          CONFIG_TARGET_x86_64_DEVICE_generic=y
-          CONFIG_PACKAGE_luci=y
-          CONFIG_PACKAGE_mwan3=y
-          CONFIG_PACKAGE_luci-app-mwan3=y
-          CONFIG_PACKAGE_luci-i18n-mwan3-zh-cn=y
-          EOF
-          make defconfig
+define Package/mwan3/conffiles
+/etc/config/mwan3
+/etc/mwan3
+endef
 
-      - name: Cache toolchain
-        uses: actions/cache@v4
-        with:
-          path: |
-            openwrt/staging_dir/host
-            openwrt/staging_dir/toolchain-x86_64_gcc-*
-            openwrt/build_dir/host
-            openwrt/build_dir/toolchain-x86_64_gcc-*
-          key: toolchain-x86_64-kwrt2512-v1
-          restore-keys: |
-            toolchain-x86_64-kwrt2512-
+define Package/mwan3/install
+	$(INSTALL_DIR) $(1)/etc/config
+	$(INSTALL_DIR) $(1)/etc/mwan3
+	$(INSTALL_DIR) $(1)/etc/init.d
+	$(INSTALL_DIR) $(1)/usr/sbin
+	$(INSTALL_DIR) $(1)/usr/lib/mwan3
+	$(INSTALL_DIR) $(1)/lib/upgrade/keep.d
 
-      - name: Download sources
-        run: |
-          cd openwrt
-          make -j$(nproc) download V=s
+	$(INSTALL_CONF) ./files/mwan3.config $(1)/etc/config/mwan3
+	$(INSTALL_BIN) ./files/mwan3.init $(1)/etc/init.d/mwan3
+	$(INSTALL_BIN) ./files/mwan3up $(1)/usr/sbin/mwan3up
+	$(INSTALL_BIN) ./files/mwan3down $(1)/usr/sbin/mwan3down
+	$(INSTALL_BIN) ./files/mwan3track $(1)/usr/sbin/mwan3track
+	$(INSTALL_BIN) ./files/mwan3user $(1)/usr/sbin/mwan3user
+	$(INSTALL_BIN) ./files/mwan3notify $(1)/usr/sbin/mwan3notify
 
-      - name: Build host tools
-        run: |
-          cd openwrt
-          make -j$(nproc) tools/install V=s
+	$(INSTALL_BIN) ./files/mwan3.keep $(1)/lib/upgrade/keep.d/mwan3
+endef
 
-      - name: Build target toolchain
-        run: |
-          cd openwrt
-          make -j$(nproc) toolchain/install V=s
-
-      - name: Build mwan3 packages
-        run: |
-          cd openwrt
-          make -j$(nproc) package/mwan3/compile V=s
-          make -j$(nproc) package/luci-app-mwan3/compile V=s
-          make -j$(nproc) package/luci-i18n-mwan3-zh-cn/compile V=s || true
-
-      - name: Debug - list all build artifacts
-        run: |
-          echo "=== bin/packages tree ==="
-          find openwrt/bin/packages/ -type f 2>/dev/null | head -100 || echo "no bin/packages"
-
-      - name: Collect IPK files
-        run: |
-          mkdir -p upload
-          find openwrt/bin/ -type f \( \
-              -name "mwan3_*.ipk" -o \
-              -name "luci-app-mwan3_*.ipk" -o \
-              -name "luci-i18n-mwan3-*.ipk" \
-            \) -exec cp -v {} upload/ \;
-          echo "=== Collected files ==="
-          ls -lah upload
-          if [ -z "$(ls -A upload)" ]; then
-            echo "::error::upload/ is empty"
-            exit 1
-          fi
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: mwan3-nft-ipk-x86_64-kwrt2512
-          path: upload/
-          if-no-files-found: error
+$(eval $(call BuildPackage,mwan3))
